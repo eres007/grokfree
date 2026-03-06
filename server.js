@@ -1,5 +1,6 @@
 const express = require('express');
-const { generateVideo, getJobStatus } = require('./worker');
+const axios = require('axios');
+const { generateVideo } = require('./worker');
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -27,6 +28,35 @@ app.get('/status/:id', (req, res) => {
     const job = jobs.get(req.params.id);
     if (!job) return res.status(404).json({ error: 'Job not found' });
     res.json(job);
+});
+
+app.get('/download/:id', async (req, res) => {
+    const job = jobs.get(req.params.id);
+    if (!job || job.status !== 'completed') {
+        return res.status(404).send('Video not ready or job not found');
+    }
+
+    try {
+        console.log(`Proxying download for job ${req.params.id}: ${job.videoUrl}`);
+
+        const response = await axios({
+            method: 'get',
+            url: job.videoUrl,
+            responseType: 'stream',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://veoaifree.com/',
+                'Accept': '*/*'
+            }
+        });
+
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Content-Disposition', `attachment; filename="video_${req.params.id}.mp4"`);
+        response.data.pipe(res);
+    } catch (error) {
+        console.error('Download proxy error:', error.message);
+        res.status(500).send('Failed to proxy video download');
+    }
 });
 
 app.get('/', (req, res) => {

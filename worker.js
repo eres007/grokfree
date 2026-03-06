@@ -52,16 +52,25 @@ async function generateVideo(jobId, prompt, updateCallback) {
             });
 
             const pollData = pollResponse.data;
-            if (pollData && !pollData.includes('empty body')) {
-                const idMatch = pollData.match(/post\/([a-zA-Z0-9-]+)/);
-                const resultId = idMatch ? idMatch[1] : pollData.split('/').pop().replace('.mp4', '');
-                videoUrl = `https://imagine-public.x.ai/imagine-public/share-videos/${resultId}.mp4?cache=1`;
+            if (pollData && typeof pollData === 'string' && !pollData.includes('empty body')) {
+                const cleanedData = pollData.trim();
+                const idMatch = cleanedData.match(/post\/([a-zA-Z0-9-]+)/);
+                const resultId = idMatch ? idMatch[1] : cleanedData.split('/').pop().replace('.mp4', '');
+
+                if (resultId) {
+                    videoUrl = `https://imagine-public.x.ai/imagine-public/share-videos/${resultId.trim()}.mp4?cache=1`;
+                }
             }
             attempts++;
         }
 
         if (videoUrl) {
-            updateCallback({ status: 'completed', videoUrl, completedAt: new Date() });
+            updateCallback({
+                status: 'completed',
+                videoUrl,
+                downloadUrl: `/download/${jobId}`,
+                completedAt: new Date()
+            });
         } else {
             updateCallback({ status: 'failed', error: 'Timed out during polling' });
         }
