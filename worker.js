@@ -55,10 +55,12 @@ async function generateVideo(jobId, prompt, updateCallback) {
             if (pollData && typeof pollData === 'string' && !pollData.includes('empty body')) {
                 const cleanedData = pollData.trim();
                 const idMatch = cleanedData.match(/post\/([a-zA-Z0-9-]+)/);
-                const resultId = idMatch ? idMatch[1] : cleanedData.split('/').pop().replace('.mp4', '');
+                let resultId = idMatch ? idMatch[1] : cleanedData.split('/').pop().split('?')[0].replace('.mp4', '');
 
                 if (resultId) {
-                    videoUrl = `https://imagine-public.x.ai/imagine-public/share-videos/${resultId.trim()}.mp4?cache=1`;
+                    // Remove ALL whitespace and newlines from the ID
+                    resultId = resultId.replace(/\s+/g, '');
+                    videoUrl = `https://imagine-public.x.ai/imagine-public/share-videos/${resultId}.mp4?cache=1`;
                 }
             }
             attempts++;
