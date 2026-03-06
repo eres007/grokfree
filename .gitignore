@@ -1,0 +1,8 @@
+node_modules
+.env
+site
+jellyfish.mp4
+cyber_lion.mp4
+output_video.mp4
+tmp
+*.webp

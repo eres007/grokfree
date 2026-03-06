@@ -1,0 +1,19 @@
+{
+  "name": "veoaifree",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "serve-site": "npx serve site"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.13.6",
+    "express": "^4.22.1",
+    "website-scraper": "^6.0.0"
+  }
+}
