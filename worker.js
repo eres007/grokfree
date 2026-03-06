@@ -1,8 +1,9 @@
 const axios = require('axios');
 const cloudinary = require('cloudinary').v2;
+const { JSDOM } = require('jsdom');
 
 const VEO_API_URL = 'https://veoaifree.com/wp-admin/admin-ajax.php';
-const NONCE = 'e696f82c15';
+const VEO_PAGE_URL = 'https://veoaifree.com/3d-ai-video-generator/';
 
 // Configure Cloudinary from environment variables
 cloudinary.config({
@@ -11,30 +12,64 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
+// Nonce cache — refreshed on each server start and periodically
+let currentNonce = null;
+
+async function fetchFreshNonce() {
+    try {
+        const res = await axios.get(VEO_PAGE_URL, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+        });
+        const match = res.data.match(/"nonce":"([a-z0-9]+)"/);
+        if (match) {
+            currentNonce = match[1];
+            console.log(`[Nonce] Refreshed: ${currentNonce}`);
+        } else {
+            throw new Error('Nonce not found in page');
+        }
+    } catch (err) {
+        console.error('[Nonce] Failed to refresh:', err.message);
+    }
+}
+
+// Fetch nonce on startup and refresh every 10 minutes
+fetchFreshNonce();
+setInterval(fetchFreshNonce, 10 * 60 * 1000);
+
+const HEADERS = {
+    'Content-Type': 'application/x-www-form-urlencoded',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Referer': 'https://veoaifree.com/'
+};
+
 async function generateVideo(jobId, prompt, updateCallback) {
     try {
-        console.log(`[Job ${jobId}] Starting generation: ${prompt}`);
+        // Wait for nonce if not yet available
+        if (!currentNonce) {
+            console.log(`[Job ${jobId}] Waiting for nonce...`);
+            await fetchFreshNonce();
+        }
+
+        console.log(`[Job ${jobId}] Starting generation with nonce ${currentNonce}: ${prompt}`);
 
         const body = new URLSearchParams();
         body.append('action', 'veo_video_generator');
-        body.append('nonce', NONCE);
+        body.append('nonce', currentNonce);
         body.append('prompt', prompt);
         body.append('totalVariations', '1');
         body.append('aspectRatio', 'VIDEO_ASPECT_RATIO_LANDSCAPE');
         body.append('actionType', 'full-video-generate');
 
-        const response = await axios.post(VEO_API_URL, body.toString(), {
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': 'https://veoaifree.com/'
-            }
-        });
+        const response = await axios.post(VEO_API_URL, body.toString(), { headers: HEADERS });
 
-        const sceneDataId = response.data;
+        const sceneDataId = String(response.data).trim();
         if (!sceneDataId || isNaN(sceneDataId)) {
             throw new Error(`Invalid SceneData received: ${sceneDataId}`);
         }
+
+        console.log(`[Job ${jobId}] SceneData ID: ${sceneDataId}`);
 
         // Polling loop
         let videoUrl = null;
@@ -47,26 +82,18 @@ async function generateVideo(jobId, prompt, updateCallback) {
 
             const pollBody = new URLSearchParams();
             pollBody.append('action', 'veo_video_generator');
-            pollBody.append('nonce', NONCE);
+            pollBody.append('nonce', currentNonce);
             pollBody.append('sceneData', sceneDataId);
             pollBody.append('actionType', 'final-video-results');
 
-            const pollResponse = await axios.post(VEO_API_URL, pollBody.toString(), {
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Referer': 'https://veoaifree.com/'
-                }
-            });
+            const pollResponse = await axios.post(VEO_API_URL, pollBody.toString(), { headers: HEADERS });
 
             const pollData = pollResponse.data;
             if (pollData && typeof pollData === 'string' && !pollData.includes('empty body')) {
                 const cleanedData = pollData.trim();
-                const idMatch = cleanedData.match(/post\/([a-zA-Z0-9-]+)/);
-                let resultId = idMatch ? idMatch[1] : cleanedData.split('/').pop().split('?')[0].replace('.mp4', '');
-
-                if (resultId) {
-                    resultId = resultId.replace(/\s+/g, '');
+                const idMatch = cleanedData.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+                if (idMatch) {
+                    const resultId = idMatch[1].replace(/\s+/g, '');
                     videoUrl = `https://imagine-public.x.ai/imagine-public/share-videos/${resultId}.mp4?cache=1`;
                     console.log(`[Job ${jobId}] Found video URL: "${videoUrl}"`);
                 }
@@ -75,7 +102,6 @@ async function generateVideo(jobId, prompt, updateCallback) {
         }
 
         if (videoUrl) {
-            // Upload to Cloudinary immediately — bypasses Grok CDN IP block
             console.log(`[Job ${jobId}] Uploading to Cloudinary...`);
             updateCallback({ status: 'uploading', videoUrl });
 
@@ -91,8 +117,8 @@ async function generateVideo(jobId, prompt, updateCallback) {
 
             updateCallback({
                 status: 'completed',
-                videoUrl,         // original Grok URL (for reference)
-                downloadUrl: cloudinaryUrl,  // permanent Cloudinary URL
+                videoUrl,
+                downloadUrl: cloudinaryUrl,
                 completedAt: new Date()
             });
         } else {
