@@ -61,12 +61,14 @@ async function generateVideo(jobId, prompt, updateCallback) {
                     // Remove ALL whitespace and newlines from the ID
                     resultId = resultId.replace(/\s+/g, '');
                     videoUrl = `https://imagine-public.x.ai/imagine-public/share-videos/${resultId}.mp4?cache=1`;
+                    console.log(`[Job ${jobId}] Generated videoUrl: "${videoUrl}"`);
                 }
             }
             attempts++;
         }
 
         if (videoUrl) {
+            console.log(`[Job ${jobId}] Final success videoUrl: "${videoUrl}"`);
             updateCallback({
                 status: 'completed',
                 videoUrl,
