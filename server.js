@@ -37,7 +37,7 @@ app.get('/download/:id', async (req, res) => {
     }
 
     try {
-        console.log(`Proxying download for job ${req.params.id}: ${job.videoUrl}`);
+        console.log(`Proxying download for job ${req.params.id}: "${job.videoUrl}"`);
 
         const response = await axios({
             method: 'get',
@@ -46,7 +46,8 @@ app.get('/download/:id', async (req, res) => {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Referer': 'https://veoaifree.com/',
-                'Accept': '*/*'
+                'Accept': 'video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
+                'Accept-Language': 'en-US,en;q=0.5'
             }
         });
 
@@ -55,7 +56,7 @@ app.get('/download/:id', async (req, res) => {
         response.data.pipe(res);
     } catch (error) {
         console.error('Download proxy error:', error.message);
-        res.status(500).send('Failed to proxy video download');
+        res.status(500).send(`Failed to proxy video download: ${error.message} - URL: ${job.videoUrl}`);
     }
 });
 

@@ -53,6 +53,7 @@ async function generateVideo(jobId, prompt, updateCallback) {
 
             const pollData = pollResponse.data;
             if (pollData && typeof pollData === 'string' && !pollData.includes('empty body')) {
+                console.log(`[Job ${jobId}] Raw Poll Data: "${pollData.substring(0, 100)}..."`);
                 const cleanedData = pollData.trim();
                 const idMatch = cleanedData.match(/post\/([a-zA-Z0-9-]+)/);
                 let resultId = idMatch ? idMatch[1] : cleanedData.split('/').pop().split('?')[0].replace('.mp4', '');
