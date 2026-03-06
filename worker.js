@@ -1,7 +1,15 @@
 const axios = require('axios');
+const cloudinary = require('cloudinary').v2;
 
 const VEO_API_URL = 'https://veoaifree.com/wp-admin/admin-ajax.php';
 const NONCE = 'e696f82c15';
+
+// Configure Cloudinary from environment variables
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
 
 async function generateVideo(jobId, prompt, updateCallback) {
     try {
@@ -53,27 +61,38 @@ async function generateVideo(jobId, prompt, updateCallback) {
 
             const pollData = pollResponse.data;
             if (pollData && typeof pollData === 'string' && !pollData.includes('empty body')) {
-                console.log(`[Job ${jobId}] Raw Poll Data: "${pollData.substring(0, 100)}..."`);
                 const cleanedData = pollData.trim();
                 const idMatch = cleanedData.match(/post\/([a-zA-Z0-9-]+)/);
                 let resultId = idMatch ? idMatch[1] : cleanedData.split('/').pop().split('?')[0].replace('.mp4', '');
 
                 if (resultId) {
-                    // Remove ALL whitespace and newlines from the ID
                     resultId = resultId.replace(/\s+/g, '');
                     videoUrl = `https://imagine-public.x.ai/imagine-public/share-videos/${resultId}.mp4?cache=1`;
-                    console.log(`[Job ${jobId}] Generated videoUrl: "${videoUrl}"`);
+                    console.log(`[Job ${jobId}] Found video URL: "${videoUrl}"`);
                 }
             }
             attempts++;
         }
 
         if (videoUrl) {
-            console.log(`[Job ${jobId}] Final success videoUrl: "${videoUrl}"`);
+            // Upload to Cloudinary immediately — bypasses Grok CDN IP block
+            console.log(`[Job ${jobId}] Uploading to Cloudinary...`);
+            updateCallback({ status: 'uploading', videoUrl });
+
+            const uploadResult = await cloudinary.uploader.upload(videoUrl, {
+                resource_type: 'video',
+                folder: 'grokfree-videos',
+                public_id: `video_${jobId}`,
+                overwrite: true
+            });
+
+            const cloudinaryUrl = uploadResult.secure_url;
+            console.log(`[Job ${jobId}] Cloudinary upload complete: ${cloudinaryUrl}`);
+
             updateCallback({
                 status: 'completed',
-                videoUrl,
-                downloadUrl: `/download/${jobId}`,
+                videoUrl,         // original Grok URL (for reference)
+                downloadUrl: cloudinaryUrl,  // permanent Cloudinary URL
                 completedAt: new Date()
             });
         } else {
