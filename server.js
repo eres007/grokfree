@@ -1,6 +1,6 @@
 const express = require('express');
 const axios = require('axios');
-const { generateVideo } = require('./worker');
+const { generateVideo, getNonceStatus } = require('./worker');
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -58,6 +58,10 @@ app.get('/download/:id', async (req, res) => {
         console.error('Download proxy error:', error.message);
         res.status(500).send(`Failed to proxy video download: ${error.message} - URL: ${job.videoUrl}`);
     }
+});
+
+app.get('/debug', (req, res) => {
+    res.json(getNonceStatus());
 });
 
 app.get('/', (req, res) => {
