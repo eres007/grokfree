@@ -144,9 +144,12 @@ async function generateVideo(jobId, prompt, updateCallback) {
             return updateCallback({ status: 'failed', error: `Invalid SceneData: "${sceneDataId}"` });
         }
 
+        updateCallback({ status: 'generating', sceneDataId });
+
         let videoUrl = null;
         let attempts = 0;
         while (!videoUrl && attempts < 30) {
+            updateCallback({ status: 'polling', attempt: attempts + 1 });
             await new Promise(r => setTimeout(r, 10000));
             const pollBody = new URLSearchParams({
                 action: 'veo_video_generator',
@@ -169,7 +172,7 @@ async function generateVideo(jobId, prompt, updateCallback) {
 
         if (!videoUrl) return updateCallback({ status: 'failed', error: 'Timed out' });
 
-        updateCallback({ status: 'uploading', videoUrl });
+        updateCallback({ status: 'downloading', videoUrl });
         await downloadAndUploadToCloudinary(jobId, videoUrl, updateCallback);
 
     } catch (error) {
