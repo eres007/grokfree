@@ -3,7 +3,6 @@ const cloudinary = require('cloudinary').v2;
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 
-// Add stealth plugin to puppeteer
 puppeteer.use(StealthPlugin());
 
 const VEO_API_URL = 'https://veoaifree.com/wp-admin/admin-ajax.php';
@@ -23,8 +22,7 @@ async function fetchFreshNonce() {
     try {
         const res = await axios.get(VEO_PAGE_URL, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             },
             timeout: 10000
         });
@@ -35,77 +33,64 @@ async function fetchFreshNonce() {
         const match = res.data.match(/"nonce":"([a-z0-9]+)"/);
         if (match) {
             currentNonce = match[1];
-            lastNonceResponse = `OK - nonce: ${currentNonce}`;
-            console.log(`[Nonce] Refreshed: ${currentNonce}`);
-        } else {
-            lastNonceResponse = `NOT FOUND in response (status: ${res.status})`;
-            console.error('[Nonce] Not found in page');
+            lastNonceResponse = `OK - ${currentNonce}`;
         }
     } catch (err) {
         lastNonceResponse = `ERROR: ${err.message}`;
-        console.error('[Nonce] Fetch error:', err.message);
     }
 }
 
 fetchFreshNonce();
 setInterval(fetchFreshNonce, 10 * 60 * 1000);
 
-function getHeaders(extra = {}) {
-    return {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://veoaifree.com/',
-        ...(sessionCookies ? { 'Cookie': sessionCookies } : {}),
-        ...extra
-    };
-}
-
-function uploadBufferToCloudinary(buffer, jobId) {
-    return new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream(
-            { resource_type: 'video', folder: 'grokfree-videos', public_id: `video_${jobId}`, overwrite: true },
-            (error, result) => { if (error) return reject(error); resolve(result); }
-        );
-        stream.end(buffer);
-    });
-}
-
-async function downloadVideoWithPuppeteer(videoUrl) {
-    console.log(`[Puppeteer] Launching for URL: ${videoUrl}`);
+async function downloadAndUploadToCloudinary(jobId, videoUrl, updateCallback) {
+    console.log(`[Job ${jobId}] Launching Low-Memory Puppeteer Stealth...`);
     const browser = await puppeteer.launch({
         headless: "new",
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--disable-gpu'
+            '--disable-gpu',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process',
+            '--disable-extensions'
         ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
     });
 
     try {
         const page = await browser.newPage();
-
-        // Emulate a realistic browser
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-        await page.setExtraHTTPHeaders({
-            'Referer': 'https://veoaifree.com/',
-            'Accept-Language': 'en-US,en;q=0.9'
-        });
 
-        console.log(`[Puppeteer] Navigating to video URL...`);
-
-        // Use page.goto and then fetch the response as a buffer
+        console.log(`[Job ${jobId}] Capturing video via Puppeteer...`);
         const response = await page.goto(videoUrl, { waitUntil: 'networkidle2', timeout: 60000 });
 
         if (!response || !response.ok()) {
-            throw new Error(`Puppeteer failed to load video: ${response ? response.status() : 'No response'}`);
+            throw new Error(`Failed to load video: ${response ? response.status() : 'No response'}`);
         }
 
+        // Use buffer for Cloudinary. We try to keeping it local to save RAM.
         const buffer = await response.buffer();
-        console.log(`[Puppeteer] Successfully downloaded buffer: ${Math.round(buffer.length / 1024)}KB`);
-        return buffer;
+        console.log(`[Job ${jobId}] Buffer size: ${Math.round(buffer.length / 1024)}KB. Uploading...`);
+
+        await new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream(
+                { resource_type: 'video', folder: 'grokfree-videos', public_id: `video_${jobId}`, overwrite: true },
+                (error, result) => {
+                    if (error) return reject(error);
+                    updateCallback({
+                        status: 'completed',
+                        videoUrl,
+                        downloadUrl: result.secure_url,
+                        completedAt: new Date()
+                    });
+                    resolve();
+                }
+            );
+            stream.end(buffer);
+        });
 
     } finally {
         await browser.close();
@@ -114,12 +99,7 @@ async function downloadVideoWithPuppeteer(videoUrl) {
 
 async function generateVideo(jobId, prompt, updateCallback) {
     try {
-        if (!currentNonce) {
-            console.log(`[Job ${jobId}] Nonce not ready, fetching...`);
-            await fetchFreshNonce();
-        }
-
-        console.log(`[Job ${jobId}] Starting with nonce ${currentNonce}: ${prompt}`);
+        if (!currentNonce) await fetchFreshNonce();
 
         const body = new URLSearchParams({
             action: 'veo_video_generator',
@@ -130,10 +110,15 @@ async function generateVideo(jobId, prompt, updateCallback) {
             actionType: 'full-video-generate'
         });
 
-        const response = await axios.post(VEO_API_URL, body.toString(), { headers: getHeaders(), timeout: 15000 });
-        const sceneDataId = String(response.data).trim();
+        const headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': 'https://veoaifree.com/',
+            ...(sessionCookies ? { 'Cookie': sessionCookies } : {})
+        };
 
-        console.log(`[Job ${jobId}] SceneData raw response: "${sceneDataId}"`);
+        const response = await axios.post(VEO_API_URL, body.toString(), { headers, timeout: 15000 });
+        const sceneDataId = String(response.data).trim();
 
         if (!sceneDataId || isNaN(sceneDataId)) {
             return updateCallback({ status: 'failed', error: `Invalid SceneData: "${sceneDataId}"` });
@@ -141,11 +126,8 @@ async function generateVideo(jobId, prompt, updateCallback) {
 
         let videoUrl = null;
         let attempts = 0;
-
         while (!videoUrl && attempts < 30) {
-            console.log(`[Job ${jobId}] Polling attempt ${attempts + 1}...`);
             await new Promise(r => setTimeout(r, 10000));
-
             const pollBody = new URLSearchParams({
                 action: 'veo_video_generator',
                 nonce: currentNonce,
@@ -153,42 +135,24 @@ async function generateVideo(jobId, prompt, updateCallback) {
                 actionType: 'final-video-results'
             });
 
-            const pollResponse = await axios.post(VEO_API_URL, pollBody.toString(), { headers: getHeaders() });
-            const pollData = pollResponse.data;
+            const pollRes = await axios.post(VEO_API_URL, pollBody.toString(), { headers });
+            const pollData = pollRes.data;
 
             if (pollData && typeof pollData === 'string' && !pollData.includes('empty body')) {
-                const idMatch = pollData.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
-                if (idMatch) {
-                    const resultId = idMatch[1].replace(/\s+/g, '');
-                    videoUrl = `https://imagine-public.x.ai/imagine-public/share-videos/${resultId}.mp4?cache=1`;
-                    console.log(`[Job ${jobId}] Found video URL: "${videoUrl}"`);
+                const match = pollData.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+                if (match) {
+                    videoUrl = `https://imagine-public.x.ai/imagine-public/share-videos/${match[1].replace(/\s+/g, '')}.mp4?cache=1`;
                 }
             }
             attempts++;
         }
 
-        if (!videoUrl) {
-            return updateCallback({ status: 'failed', error: 'Timed out during polling' });
-        }
+        if (!videoUrl) return updateCallback({ status: 'failed', error: 'Timed out' });
 
-        console.log(`[Job ${jobId}] Downloading video buffer with Puppeteer Stealth...`);
         updateCallback({ status: 'uploading', videoUrl });
-
-        const videoBuffer = await downloadVideoWithPuppeteer(videoUrl);
-        console.log(`[Job ${jobId}] Buffer captured. Uploading to Cloudinary...`);
-
-        const uploadResult = await uploadBufferToCloudinary(videoBuffer, jobId);
-        console.log(`[Job ${jobId}] Cloudinary URL: ${uploadResult.secure_url}`);
-
-        updateCallback({
-            status: 'completed',
-            videoUrl,
-            downloadUrl: uploadResult.secure_url,
-            completedAt: new Date()
-        });
+        await downloadAndUploadToCloudinary(jobId, videoUrl, updateCallback);
 
     } catch (error) {
-        console.error(`[Job ${jobId}] Error:`, error.message);
         updateCallback({ status: 'failed', error: error.message });
     }
 }
