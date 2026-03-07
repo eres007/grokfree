@@ -45,7 +45,10 @@ setInterval(fetchFreshNonce, 10 * 60 * 1000);
 
 async function downloadAndUploadToCloudinary(jobId, videoUrl, updateCallback) {
     console.log(`[Job ${jobId}] Launching Low-Memory Puppeteer Stealth...`);
-    const browser = await puppeteer.launch({
+    console.log(`[Debug] PUPPETEER_EXECUTABLE_PATH: "${process.env.PUPPETEER_EXECUTABLE_PATH || 'not set'}"`);
+
+    // Explicitly check for Chromium path if NOT using the bundled one
+    const launchArgs = {
         headless: "new",
         args: [
             '--no-sandbox',
@@ -57,7 +60,9 @@ async function downloadAndUploadToCloudinary(jobId, videoUrl, updateCallback) {
             '--single-process',
             '--disable-extensions'
         ]
-    });
+    };
+
+    const browser = await puppeteer.launch(launchArgs);
 
     try {
         const page = await browser.newPage();
