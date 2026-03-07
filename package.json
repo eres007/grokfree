@@ -15,6 +15,9 @@
     "axios": "^1.13.6",
     "cloudinary": "^2.9.0",
     "express": "^4.22.1",
+    "puppeteer": "^24.38.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "website-scraper": "^6.0.0"
   }
 }

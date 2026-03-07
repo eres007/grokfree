@@ -1,5 +1,10 @@
 const axios = require('axios');
 const cloudinary = require('cloudinary').v2;
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+
+// Add stealth plugin to puppeteer
+puppeteer.use(StealthPlugin());
 
 const VEO_API_URL = 'https://veoaifree.com/wp-admin/admin-ajax.php';
 const VEO_PAGE_URL = 'https://veoaifree.com/3d-ai-video-generator/';
@@ -65,6 +70,48 @@ function uploadBufferToCloudinary(buffer, jobId) {
     });
 }
 
+async function downloadVideoWithPuppeteer(videoUrl) {
+    console.log(`[Puppeteer] Launching for URL: ${videoUrl}`);
+    const browser = await puppeteer.launch({
+        headless: "new",
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--disable-gpu'
+        ],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
+    });
+
+    try {
+        const page = await browser.newPage();
+
+        // Emulate a realistic browser
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+        await page.setExtraHTTPHeaders({
+            'Referer': 'https://veoaifree.com/',
+            'Accept-Language': 'en-US,en;q=0.9'
+        });
+
+        console.log(`[Puppeteer] Navigating to video URL...`);
+
+        // Use page.goto and then fetch the response as a buffer
+        const response = await page.goto(videoUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+
+        if (!response || !response.ok()) {
+            throw new Error(`Puppeteer failed to load video: ${response ? response.status() : 'No response'}`);
+        }
+
+        const buffer = await response.buffer();
+        console.log(`[Puppeteer] Successfully downloaded buffer: ${Math.round(buffer.length / 1024)}KB`);
+        return buffer;
+
+    } finally {
+        await browser.close();
+    }
+}
+
 async function generateVideo(jobId, prompt, updateCallback) {
     try {
         if (!currentNonce) {
@@ -97,7 +144,7 @@ async function generateVideo(jobId, prompt, updateCallback) {
 
         while (!videoUrl && attempts < 30) {
             console.log(`[Job ${jobId}] Polling attempt ${attempts + 1}...`);
-            await new Promise(r => setTimeout(r, 5000));
+            await new Promise(r => setTimeout(r, 10000));
 
             const pollBody = new URLSearchParams({
                 action: 'veo_video_generator',
@@ -124,22 +171,11 @@ async function generateVideo(jobId, prompt, updateCallback) {
             return updateCallback({ status: 'failed', error: 'Timed out during polling' });
         }
 
-        console.log(`[Job ${jobId}] Downloading video buffer with session cookies...`);
+        console.log(`[Job ${jobId}] Downloading video buffer with Puppeteer Stealth...`);
         updateCallback({ status: 'uploading', videoUrl });
 
-        const videoResponse = await axios.get(videoUrl, {
-            responseType: 'arraybuffer',
-            timeout: 60000,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': 'https://veoaifree.com/',
-                'Accept': 'video/webm,video/ogg,video/*;q=0.9,*/*;q=0.5',
-                ...(sessionCookies ? { 'Cookie': sessionCookies } : {})
-            }
-        });
-
-        const videoBuffer = Buffer.from(videoResponse.data);
-        console.log(`[Job ${jobId}] Downloaded ${Math.round(videoBuffer.length / 1024)}KB. Uploading to Cloudinary...`);
+        const videoBuffer = await downloadVideoWithPuppeteer(videoUrl);
+        console.log(`[Job ${jobId}] Buffer captured. Uploading to Cloudinary...`);
 
         const uploadResult = await uploadBufferToCloudinary(videoBuffer, jobId);
         console.log(`[Job ${jobId}] Cloudinary URL: ${uploadResult.secure_url}`);
