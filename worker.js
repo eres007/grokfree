@@ -48,8 +48,23 @@ setInterval(fetchFreshNonce, 10 * 60 * 1000);
 
 async function downloadAndUploadToCloudinary(jobId, videoUrl, updateCallback) {
     console.log(`[Job ${jobId}] Launching Low-Memory Puppeteer Stealth...`);
+    // Debug: Find chromium recursively in the whole project
+    let foundPath = null;
+    try {
+        const findCmd = 'find /opt/render/project/src -name "chrome" -type f -perm /u+x -not -path "*/node_modules/*" | head -n 1';
+        foundPath = execSync(findCmd).toString().trim();
+        if (!foundPath) {
+            const findCmd2 = 'find /opt/render/project/src -name "chrome" -type f -perm /u+x | head -n 1';
+            foundPath = execSync(findCmd2).toString().trim();
+        }
+        console.log(`[Debug] Found Chrome at: "${foundPath || 'NONE'}"`);
+    } catch (e) {
+        console.log(`[Debug] Find command failed: ${e.message}`);
+    }
+
     const launchArgs = {
         headless: "new",
+        executablePath: foundPath || null,
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -62,7 +77,7 @@ async function downloadAndUploadToCloudinary(jobId, videoUrl, updateCallback) {
         ]
     };
 
-    console.log(`[Job ${jobId}] Launching Puppeteer...`);
+    console.log(`[Job ${jobId}] Launching Puppeteer with executablePath: ${launchArgs.executablePath}`);
     const browser = await puppeteer.launch(launchArgs);
 
     try {
