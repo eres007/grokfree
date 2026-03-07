@@ -56,8 +56,7 @@ async function downloadAndUploadToCloudinary(jobId, videoUrl, updateCallback) {
             '--no-zygote',
             '--single-process',
             '--disable-extensions'
-        ],
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
+        ]
     });
 
     try {
