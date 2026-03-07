@@ -5,8 +5,6 @@ set -o errexit
 # Install dependencies
 npm install
 
-# Clear any old Puppeteer cache if it exists
-# rm -rf /opt/render/project/src/.cache/puppeteer
-
-# Explicitly install the browser for this environment
+# Ensure Puppeteer downloads Chromium to the cache directory
+# (Render environment variables will be available here)
 npx puppeteer install
