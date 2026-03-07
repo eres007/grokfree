@@ -48,19 +48,8 @@ setInterval(fetchFreshNonce, 10 * 60 * 1000);
 
 async function downloadAndUploadToCloudinary(jobId, videoUrl, updateCallback) {
     console.log(`[Job ${jobId}] Launching Low-Memory Puppeteer Stealth...`);
-    // Debug: Find chromium
-    let foundPath = null;
-    try {
-        const findCmd = 'find /opt/render/project/src/.cache/puppeteer -name "chrome" -type f -perm /u+x | head -n 1';
-        foundPath = execSync(findCmd).toString().trim();
-        console.log(`[Debug] Found Chrome at: "${foundPath}"`);
-    } catch (e) {
-        console.log(`[Debug] Find command failed: ${e.message}`);
-    }
-
     const launchArgs = {
         headless: "new",
-        executablePath: foundPath || null,
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -73,7 +62,7 @@ async function downloadAndUploadToCloudinary(jobId, videoUrl, updateCallback) {
         ]
     };
 
-    console.log(`[Job ${jobId}] Launching with executablePath: ${launchArgs.executablePath}`);
+    console.log(`[Job ${jobId}] Launching Puppeteer...`);
     const browser = await puppeteer.launch(launchArgs);
 
     try {
