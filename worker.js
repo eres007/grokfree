@@ -2,6 +2,9 @@ const axios = require('axios');
 const cloudinary = require('cloudinary').v2;
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
 
 puppeteer.use(StealthPlugin());
 
@@ -45,11 +48,19 @@ setInterval(fetchFreshNonce, 10 * 60 * 1000);
 
 async function downloadAndUploadToCloudinary(jobId, videoUrl, updateCallback) {
     console.log(`[Job ${jobId}] Launching Low-Memory Puppeteer Stealth...`);
-    console.log(`[Debug] PUPPETEER_EXECUTABLE_PATH: "${process.env.PUPPETEER_EXECUTABLE_PATH || 'not set'}"`);
+    // Debug: Find chromium
+    let foundPath = null;
+    try {
+        const findCmd = 'find /opt/render/project/src/.cache/puppeteer -name "chrome" -type f -perm /u+x | head -n 1';
+        foundPath = execSync(findCmd).toString().trim();
+        console.log(`[Debug] Found Chrome at: "${foundPath}"`);
+    } catch (e) {
+        console.log(`[Debug] Find command failed: ${e.message}`);
+    }
 
-    // Explicitly check for Chromium path if NOT using the bundled one
     const launchArgs = {
         headless: "new",
+        executablePath: foundPath || null,
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -62,6 +73,7 @@ async function downloadAndUploadToCloudinary(jobId, videoUrl, updateCallback) {
         ]
     };
 
+    console.log(`[Job ${jobId}] Launching with executablePath: ${launchArgs.executablePath}`);
     const browser = await puppeteer.launch(launchArgs);
 
     try {
