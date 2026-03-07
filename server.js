@@ -1,3 +1,4 @@
+// Veo/Grok Video Automation API - Cloudinary Version
 const express = require('express');
 const axios = require('axios');
 const { generateVideo, getNonceStatus } = require('./worker');
