@@ -15,12 +15,28 @@ app.post('/generate', async (req, res) => {
     if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
 
     const jobId = Date.now().toString();
-    jobs.set(jobId, { status: 'pending', prompt, createdAt: new Date() });
+    jobs.set(jobId, { status: 'pending', prompt, createdAt: new Date(), lastUpdatedAt: new Date() });
 
-    // Trigger generation asynchronously
-    generateVideo(jobId, prompt, (statusData) => {
-        jobs.set(jobId, { ...jobs.get(jobId), ...statusData });
-    });
+    // Trigger generation asynchronously (and ensure we never stay "pending" silently)
+    const safeUpdate = (statusData) => {
+        try {
+            const prev = jobs.get(jobId) || { prompt, createdAt: new Date() };
+            jobs.set(jobId, { ...prev, ...statusData, lastUpdatedAt: new Date() });
+        } catch (err) {
+            // If status updates fail, at least mark the job failed so callers can see it.
+            jobs.set(jobId, {
+                ...(jobs.get(jobId) || { prompt, createdAt: new Date() }),
+                status: 'failed',
+                error: `Status update error: ${err && err.message ? err.message : String(err)}`,
+                lastUpdatedAt: new Date()
+            });
+        }
+    };
+
+    safeUpdate({ status: 'starting' });
+    Promise.resolve()
+        .then(() => generateVideo(jobId, prompt, safeUpdate))
+        .catch((err) => safeUpdate({ status: 'failed', error: err && err.message ? err.message : String(err) }));
 
     res.json({ jobId, message: 'Generation started' });
 });
