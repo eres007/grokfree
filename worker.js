@@ -20,6 +20,12 @@ cloudinary.config({
 let currentNonce = null;
 let sessionCookies = '';
 let lastNonceResponse = '';
+let lastNonceFetchedAt = null;
+let lastNonceHttpStatus = null;
+let lastNonceSetCookieCount = 0;
+let lastPollHttpStatus = null;
+let lastPollSnippet = '';
+let lastPollAt = null;
 
 async function fetchFreshNonce() {
     try {
@@ -29,17 +35,24 @@ async function fetchFreshNonce() {
             },
             timeout: 10000
         });
+        lastNonceFetchedAt = new Date();
+        lastNonceHttpStatus = res.status;
         const setCookieHeader = res.headers['set-cookie'];
         if (setCookieHeader) {
+            lastNonceSetCookieCount = Array.isArray(setCookieHeader) ? setCookieHeader.length : 1;
             sessionCookies = setCookieHeader.map(c => c.split(';')[0]).join('; ');
         }
         const match = res.data.match(/"nonce":"([a-z0-9]+)"/);
         if (match) {
             currentNonce = match[1];
             lastNonceResponse = `OK - ${currentNonce}`;
+        } else {
+            lastNonceResponse = `ERROR: nonce not found in page HTML`;
         }
     } catch (err) {
         lastNonceResponse = `ERROR: ${err.message}`;
+        lastNonceFetchedAt = new Date();
+        lastNonceHttpStatus = err && err.response ? err.response.status : null;
     }
 }
 
@@ -141,15 +154,37 @@ async function generateVideo(jobId, prompt, updateCallback) {
         const sceneDataId = String(response.data).trim();
 
         if (!sceneDataId || isNaN(sceneDataId)) {
-            return updateCallback({ status: 'failed', error: `Invalid SceneData: "${sceneDataId}"` });
+            return updateCallback({
+                status: 'failed',
+                error: `Invalid SceneData: "${sceneDataId}"`,
+                debug: {
+                    nonce: currentNonce,
+                    hasCookies: !!sessionCookies
+                }
+            });
         }
 
-        updateCallback({ status: 'generating', sceneDataId });
+        updateCallback({
+            status: 'generating',
+            sceneDataId,
+            debug: {
+                nonce: currentNonce,
+                hasCookies: !!sessionCookies
+            }
+        });
 
         let videoUrl = null;
         let attempts = 0;
         while (!videoUrl && attempts < 30) {
-            updateCallback({ status: 'polling', attempt: attempts + 1 });
+            updateCallback({
+                status: 'polling',
+                attempt: attempts + 1,
+                debug: {
+                    lastPollHttpStatus,
+                    lastPollAt,
+                    lastPollSnippet
+                }
+            });
             await new Promise(r => setTimeout(r, 10000));
             const pollBody = new URLSearchParams({
                 action: 'veo_video_generator',
@@ -158,8 +193,26 @@ async function generateVideo(jobId, prompt, updateCallback) {
                 actionType: 'final-video-results'
             });
 
-            const pollRes = await axios.post(VEO_API_URL, pollBody.toString(), { headers });
+            let pollRes;
+            try {
+                pollRes = await axios.post(VEO_API_URL, pollBody.toString(), { headers, timeout: 15000 });
+                lastPollHttpStatus = pollRes.status;
+            } catch (err) {
+                lastPollHttpStatus = err && err.response ? err.response.status : null;
+                lastPollAt = new Date();
+                lastPollSnippet = String((err && err.response && err.response.data) ? err.response.data : (err && err.message ? err.message : err)).slice(0, 400);
+                updateCallback({
+                    status: 'polling',
+                    attempt: attempts + 1,
+                    debug: { lastPollHttpStatus, lastPollAt, lastPollSnippet, pollError: 'request-failed' }
+                });
+                attempts++;
+                continue;
+            }
+
             const pollData = pollRes.data;
+            lastPollAt = new Date();
+            lastPollSnippet = String(pollData).slice(0, 400);
 
             if (pollData && typeof pollData === 'string' && !pollData.includes('empty body')) {
                 const match = pollData.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
@@ -170,14 +223,50 @@ async function generateVideo(jobId, prompt, updateCallback) {
             attempts++;
         }
 
-        if (!videoUrl) return updateCallback({ status: 'failed', error: 'Timed out' });
+        if (!videoUrl) {
+            return updateCallback({
+                status: 'failed',
+                error: 'Timed out',
+                debug: {
+                    nonce: currentNonce,
+                    hasCookies: !!sessionCookies,
+                    lastPollHttpStatus,
+                    lastPollAt,
+                    lastPollSnippet
+                }
+            });
+        }
 
         updateCallback({ status: 'downloading', videoUrl });
         await downloadAndUploadToCloudinary(jobId, videoUrl, updateCallback);
 
     } catch (error) {
-        updateCallback({ status: 'failed', error: error.message });
+        updateCallback({
+            status: 'failed',
+            error: error && error.message ? error.message : String(error),
+            debug: {
+                nonce: currentNonce,
+                hasCookies: !!sessionCookies,
+                lastPollHttpStatus,
+                lastPollAt,
+                lastPollSnippet
+            }
+        });
     }
 }
 
-module.exports = { generateVideo, getNonceStatus: () => ({ nonce: currentNonce, nonceResponse: lastNonceResponse, hasCookies: !!sessionCookies }) };
+module.exports = {
+    generateVideo,
+    getNonceStatus: () => ({
+        nonce: currentNonce,
+        nonceResponse: lastNonceResponse,
+        nonceFetchedAt: lastNonceFetchedAt,
+        nonceHttpStatus: lastNonceHttpStatus,
+        setCookieCount: lastNonceSetCookieCount,
+        hasCookies: !!sessionCookies,
+        cookieLength: sessionCookies ? sessionCookies.length : 0,
+        lastPollHttpStatus,
+        lastPollAt,
+        lastPollSnippet
+    })
+};
