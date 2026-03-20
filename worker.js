@@ -175,7 +175,8 @@ async function generateVideo(jobId, prompt, updateCallback) {
 
         let videoUrl = null;
         let attempts = 0;
-        while (!videoUrl && attempts < 30) {
+        const maxAttempts = 180;
+        while (!videoUrl && attempts < maxAttempts) {
             updateCallback({
                 status: 'polling',
                 attempt: attempts + 1,
@@ -185,7 +186,7 @@ async function generateVideo(jobId, prompt, updateCallback) {
                     lastPollSnippet
                 }
             });
-            await new Promise(r => setTimeout(r, 10000));
+            await new Promise(r => setTimeout(r, 5000));
             const pollBody = new URLSearchParams({
                 action: 'veo_video_generator',
                 nonce: currentNonce,
@@ -215,9 +216,15 @@ async function generateVideo(jobId, prompt, updateCallback) {
             lastPollSnippet = String(pollData).slice(0, 400);
 
             if (pollData && typeof pollData === 'string' && !pollData.includes('empty body')) {
-                const match = pollData.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
-                if (match) {
-                    videoUrl = `https://imagine-public.x.ai/imagine-public/share-videos/${match[1].replace(/\s+/g, '')}.mp4?cache=1`;
+                const trimmed = String(pollData).trim();
+                let id = null;
+                const uuidMatch = trimmed.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+                const postMatch = trimmed.match(/post\/([a-zA-Z0-9-]+)/);
+                if (uuidMatch) id = uuidMatch[1].replace(/\s+/g, '');
+                else if (postMatch) id = postMatch[1];
+                else id = trimmed.split('/').pop().replace(/\.mp4.*$/, '').replace(/\?.*$/, '');
+                if (id && id.length > 5) {
+                    videoUrl = `https://imagine-public.x.ai/imagine-public/share-videos/${id}.mp4?cache=1`;
                 }
             }
             attempts++;
